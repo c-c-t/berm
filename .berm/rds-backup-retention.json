@@ -1,9 +1,0 @@
-{
-  "id": "rds-backup-retention-minimum",
-  "name": "RDS instances must have minimum backup retention period",
-  "resource_type": "aws_db_instance",
-  "severity": "warning",
-  "property": "backup_retention_period",
-  "greater_than_or_equal": 7,
-  "message": "RDS instance {{resource_name}} should have at least 7 days backup retention for disaster recovery"
-}

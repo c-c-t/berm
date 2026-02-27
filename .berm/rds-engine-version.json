@@ -1,9 +1,0 @@
-{
-  "id": "rds-engine-version-minimum",
-  "name": "RDS instances must have minimum engine version",
-  "resource_type": "aws_db_instance",
-  "severity": "error",
-  "property": "engine_version",
-  "greater_than_or_equal": 15.2,
-  "message": "RDS instance {{resource_name}} should have at least engine version 15.2"
-}

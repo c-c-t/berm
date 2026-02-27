@@ -1,9 +1,0 @@
-{
-  "id": "lambda-python-38-error",
-  "name": "Lambda Python 3.8 is end-of-life (ERROR)",
-  "resource_type": "aws_lambda_function",
-  "severity": "error",
-  "property": "runtime",
-  "equals": "python3.8",
-  "message": "Lambda {{resource_name}} uses Python 3.8 which is end-of-life and must be upgraded immediately"
-}

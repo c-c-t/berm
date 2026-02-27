@@ -1,9 +1,0 @@
-{
-  "id": "rds-postgres-version-critical",
-  "name": "PostgreSQL versions below 12 are end-of-life (ERROR)",
-  "resource_type": "aws_db_instance",
-  "severity": "error",
-  "property": "engine_version",
-  "greater_than_or_equal": 12,
-  "message": "RDS instance {{resource_name}} uses PostgreSQL version below 12 which is end-of-life and has critical security vulnerabilities - upgrade immediately"
-}

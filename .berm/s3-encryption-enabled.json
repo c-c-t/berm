@@ -1,9 +1,0 @@
-{
-  "id": "s3-encryption-enabled",
-  "name": "S3 buckets must have server-side encryption enabled",
-  "resource_type": "aws_s3_bucket_server_side_encryption_configuration",
-  "severity": "error",
-  "property": "rule.0.apply_server_side_encryption_by_default.0.sse_algorithm",
-  "equals": "AES256",
-  "message": "S3 bucket {{resource_name}} must have server-side encryption enabled (AES256 or aws:kms)"
-}

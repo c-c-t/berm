@@ -1,9 +1,0 @@
-{
-  "id": "s3-versioning-enabled",
-  "name": "S3 buckets must have versioning enabled",
-  "resource_type": "aws_s3_bucket_versioning",
-  "severity": "error",
-  "property": "versioning_configuration.0.status",
-  "equals": "Enabled",
-  "message": "S3 bucket {{resource_name}} must have versioning enabled for data protection and compliance"
-}

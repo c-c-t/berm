@@ -1,9 +1,0 @@
-{
-  "id": "rds-postgres-version-deprecated",
-  "name": "PostgreSQL versions 12-13 will be deprecated soon (WARNING)",
-  "resource_type": "aws_db_instance",
-  "severity": "warning",
-  "property": "engine_version",
-  "greater_than_or_equal": 14,
-  "message": "RDS instance {{resource_name}} uses PostgreSQL version 12 or 13 which will reach end-of-life soon - plan upgrade to version 14 or later"
-}

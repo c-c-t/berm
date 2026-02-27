@@ -1,9 +1,0 @@
-{
-  "id": "s3-block-public-access",
-  "name": "S3 buckets must block public access",
-  "resource_type": "aws_s3_bucket_public_access_block",
-  "severity": "error",
-  "property": "block_public_acls",
-  "equals": true,
-  "message": "S3 bucket {{resource_name}} must have public access blocked to prevent data exposure"
-}

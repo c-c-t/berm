@@ -1,9 +1,0 @@
-{
-  "id": "lambda-python-39-warning",
-  "name": "Lambda Python 3.9 will be deprecated (WARNING)",
-  "resource_type": "aws_lambda_function",
-  "severity": "warning",
-  "property": "runtime",
-  "equals": "python3.9",
-  "message": "Lambda {{resource_name}} uses Python 3.9 which will be deprecated soon - consider upgrading to Python 3.11 or later"
-}

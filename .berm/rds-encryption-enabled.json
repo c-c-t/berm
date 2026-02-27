@@ -1,9 +1,0 @@
-{
-  "id": "rds-storage-encrypted",
-  "name": "RDS instances must have storage encryption enabled",
-  "resource_type": "aws_db_instance",
-  "severity": "error",
-  "property": "storage_encrypted",
-  "equals": true,
-  "message": "RDS instance {{resource_name}} must have storage encryption enabled for data security"
-}

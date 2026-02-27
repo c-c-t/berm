@@ -1,8 +1,0 @@
-{
-  "id": "s3-use-module-only",
-  "name": "S3 buckets must use approved module",
-  "resource_type": "aws_s3_bucket",
-  "severity": "error",
-  "resource_forbidden": true,
-  "message": "Direct use of aws_s3_bucket is not allowed. Use module.s3_bucket instead to ensure security defaults (versioning, encryption, public access blocks) are applied"
-}
