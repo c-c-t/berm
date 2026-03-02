@@ -165,6 +165,13 @@ class CrossResourceEvaluator:
         Returns:
             List of violations (empty if compliant)
         """
+        # Check if rule should only apply to creation actions
+        if rule.only_on_create:
+            actions = primary.get("actions", [])
+            if not rule.is_creation_action(actions):
+                # Skip this resource - rule only applies to creations
+                return []
+
         # Find related resources using appropriate strategy
         related_resources = self._find_related_resources(
             primary, required, resource_index, reference_map, constant_map

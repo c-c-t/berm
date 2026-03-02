@@ -192,6 +192,59 @@ def test_load_terraform_plan_includes_replaced(tmp_path):
     assert replaced_standard["values"]["bucket"] == "replacement-bucket"
 
 
+def test_load_terraform_plan_preserves_actions(tmp_path):
+    """Test that actions are preserved in normalized resources."""
+    plan_data = {
+        "resource_changes": [
+            {
+                "address": "aws_s3_bucket.created",
+                "type": "aws_s3_bucket",
+                "name": "created",
+                "change": {
+                    "actions": ["create"],
+                    "after": {"bucket": "new-bucket"},
+                },
+            },
+            {
+                "address": "aws_s3_bucket.updated",
+                "type": "aws_s3_bucket",
+                "name": "updated",
+                "change": {
+                    "actions": ["update"],
+                    "after": {"bucket": "existing-bucket"},
+                },
+            },
+            {
+                "address": "aws_s3_bucket.replaced",
+                "type": "aws_s3_bucket",
+                "name": "replaced",
+                "change": {
+                    "actions": ["delete", "create"],
+                    "after": {"bucket": "replacement-bucket"},
+                },
+            },
+        ]
+    }
+
+    plan_file = tmp_path / "plan.json"
+    with open(plan_file, "w") as f:
+        json.dump(plan_data, f)
+
+    resources = load_terraform_plan(str(plan_file), _allow_absolute=True)
+
+    # Should have all three resources with actions preserved
+    assert len(resources) == 3
+
+    created = [r for r in resources if r["address"] == "aws_s3_bucket.created"][0]
+    assert created["actions"] == ["create"]
+
+    updated = [r for r in resources if r["address"] == "aws_s3_bucket.updated"][0]
+    assert updated["actions"] == ["update"]
+
+    replaced = [r for r in resources if r["address"] == "aws_s3_bucket.replaced"][0]
+    assert replaced["actions"] == ["delete", "create"]
+
+
 def test_get_resource_by_type(sample_resources):
     """Test filtering resources by type."""
     s3_resources = get_resource_by_type(sample_resources, "aws_s3_bucket")

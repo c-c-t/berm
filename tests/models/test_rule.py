@@ -531,3 +531,58 @@ def test_rule_multiple_required_resources():
     assert rule.requires_resources[0].resource_type == "aws_s3_bucket_versioning"
     assert rule.requires_resources[1].resource_type == "aws_s3_bucket_public_access_block"
     assert rule.requires_resources[2].resource_type == "aws_s3_bucket_server_side_encryption_configuration"
+
+
+def test_rule_only_on_create_valid():
+    """Test creating a rule with only_on_create field."""
+    rule = Rule(
+        id="test",
+        name="Test",
+        resource_type="aws_s3_bucket",
+        severity="error",
+        property="tags",
+        contains="Environment",
+        message="msg",
+        only_on_create=True,
+    )
+
+    assert rule.only_on_create is True
+
+
+def test_rule_only_on_create_optional():
+    """Test that only_on_create is optional and defaults to None."""
+    rule = Rule(
+        id="test",
+        name="Test",
+        resource_type="aws_s3_bucket",
+        severity="error",
+        property="tags",
+        contains="Environment",
+        message="msg",
+    )
+
+    assert rule.only_on_create is None
+
+
+def test_rule_is_creation_action():
+    """Test the is_creation_action helper method."""
+    rule = Rule(
+        id="test",
+        name="Test",
+        resource_type="aws_s3_bucket",
+        severity="error",
+        property="prop",
+        equals=True,
+        message="msg",
+    )
+
+    # Creation actions
+    assert rule.is_creation_action(["create"]) is True
+    assert rule.is_creation_action(["delete", "create"]) is True
+    assert rule.is_creation_action(["create", "delete"]) is True
+
+    # Non-creation actions
+    assert rule.is_creation_action(["update"]) is False
+    assert rule.is_creation_action([]) is False
+    assert rule.is_creation_action(["delete"]) is False
+    assert rule.is_creation_action(["no-op"]) is False

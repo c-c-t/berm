@@ -477,3 +477,49 @@ def test_evaluate_resource_types_array(evaluator):
 
     # Should find 4 violations (2 buckets + 2 analytics, all missing versioning)
     assert len(violations) == 4
+
+
+def test_cross_resource_only_on_create_filters_updates():
+    """Test that only_on_create works with cross-resource rules."""
+    evaluator = CrossResourceEvaluator()
+
+    rule = Rule(
+        id="test",
+        name="Test",
+        resource_type="aws_s3_bucket",
+        severity="error",
+        message="S3 bucket {{resource_name}} must have versioning",
+        only_on_create=True,
+        requires_resources=[
+            RequiredResource(
+                resource_type="aws_s3_bucket_versioning",
+                relationship="referenced_by_primary",
+                reference_property="bucket",
+                min_count=1,
+            )
+        ],
+    )
+
+    resources = [
+        {
+            "address": "aws_s3_bucket.created",
+            "type": "aws_s3_bucket",
+            "name": "created",
+            "values": {"bucket": "new-bucket"},
+            "actions": ["create"],
+        },
+        {
+            "address": "aws_s3_bucket.updated",
+            "type": "aws_s3_bucket",
+            "name": "updated",
+            "values": {"bucket": "existing-bucket"},
+            "actions": ["update"],
+        },
+    ]
+
+    # No versioning resources exist for either
+    violations = evaluator.evaluate(rule, resources, plan_data=None)
+
+    # Should only find violation for created bucket, not updated one
+    assert len(violations) == 1
+    assert violations[0].resource_name == "aws_s3_bucket.created"

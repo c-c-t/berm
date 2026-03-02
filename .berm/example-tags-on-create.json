@@ -1,0 +1,16 @@
+{
+  "id": "new-resources-require-additional-tags",
+  "name": "New resources must have Owner and CreatedDate tags",
+  "resource_types": [
+    "aws_s3_bucket",
+    "aws_db_instance",
+    "aws_lambda_function",
+    "aws_instance",
+    "aws_ecs_cluster"
+  ],
+  "severity": "error",
+  "property": "tags",
+  "has_keys": ["Owner", "CreatedDate"],
+  "message": "New resource {{resource_name}} must have Owner and CreatedDate tags for tracking purposes",
+  "only_on_create": true
+}

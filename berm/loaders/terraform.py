@@ -37,7 +37,8 @@ def load_terraform_plan(plan_path: str, _allow_absolute: bool = False) -> List[D
                 "address": "aws_s3_bucket.example",
                 "type": "aws_s3_bucket",
                 "name": "example",
-                "values": {...}  # Resource configuration
+                "values": {...},  # Resource configuration
+                "actions": ["create"] | ["update"] | ["delete", "create"] | ["create", "delete"]
             },
             ...
         ]
@@ -124,6 +125,7 @@ def load_terraform_plan(plan_path: str, _allow_absolute: bool = False) -> List[D
                 "type": resource_type,
                 "name": name,
                 "values": values,
+                "actions": actions,
             }
 
             resources.append(resource)

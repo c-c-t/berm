@@ -82,6 +82,13 @@ class SimpleEvaluator:
         resource_type = resource.get("type", "unknown")
         values = resource.get("values", {})
 
+        # Check if rule should only apply to creation actions
+        if rule.only_on_create:
+            actions = resource.get("actions", [])
+            if not rule.is_creation_action(actions):
+                # Skip this resource - rule only applies to creations
+                return None
+
         # Check if this is a forbidden resource rule
         if rule.resource_forbidden is True:
             # Any instance of this resource type is a violation

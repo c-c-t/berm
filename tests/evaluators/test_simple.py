@@ -502,3 +502,121 @@ def test_evaluator_skips_cross_resource_rules():
     # Should return empty list (SimpleEvaluator skips cross-resource rules)
     violations = evaluator.evaluate(rule, resources)
     assert violations == []
+
+
+def test_evaluator_only_on_create_filters_updates():
+    """Test that only_on_create rules skip update actions."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="test",
+        name="Test",
+        resource_type="aws_s3_bucket",
+        severity="error",
+        property="tags",
+        contains="Environment",
+        message="Resource {{resource_name}} must have Environment tag",
+        only_on_create=True,
+    )
+
+    resources = [
+        {
+            "address": "aws_s3_bucket.created",
+            "type": "aws_s3_bucket",
+            "name": "created",
+            "values": {"bucket": "new-bucket"},  # Missing tags - should violate
+            "actions": ["create"],
+        },
+        {
+            "address": "aws_s3_bucket.updated",
+            "type": "aws_s3_bucket",
+            "name": "updated",
+            "values": {"bucket": "existing-bucket"},  # Missing tags - should be skipped
+            "actions": ["update"],
+        },
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+
+    # Should only find violation for the created resource
+    assert len(violations) == 1
+    assert violations[0].resource_name == "aws_s3_bucket.created"
+
+
+def test_evaluator_only_on_create_includes_replacements():
+    """Test that only_on_create rules apply to replacement actions."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="test",
+        name="Test",
+        resource_type="aws_s3_bucket",
+        severity="error",
+        property="tags",
+        contains="Environment",
+        message="Resource {{resource_name}} must have Environment tag",
+        only_on_create=True,
+    )
+
+    resources = [
+        {
+            "address": "aws_s3_bucket.replaced_standard",
+            "type": "aws_s3_bucket",
+            "name": "replaced_standard",
+            "values": {"bucket": "replacement-bucket"},  # Missing tags
+            "actions": ["delete", "create"],
+        },
+        {
+            "address": "aws_s3_bucket.replaced_cbd",
+            "type": "aws_s3_bucket",
+            "name": "replaced_cbd",
+            "values": {"bucket": "replacement-bucket-2"},  # Missing tags
+            "actions": ["create", "delete"],
+        },
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+
+    # Should find violations for both replaced resources
+    assert len(violations) == 2
+    addresses = [v.resource_name for v in violations]
+    assert "aws_s3_bucket.replaced_standard" in addresses
+    assert "aws_s3_bucket.replaced_cbd" in addresses
+
+
+def test_evaluator_without_only_on_create_evaluates_all():
+    """Test that rules without only_on_create evaluate all resources."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="test",
+        name="Test",
+        resource_type="aws_s3_bucket",
+        severity="error",
+        property="tags",
+        contains="Environment",
+        message="Resource {{resource_name}} must have Environment tag",
+        # only_on_create not set - should evaluate all
+    )
+
+    resources = [
+        {
+            "address": "aws_s3_bucket.created",
+            "type": "aws_s3_bucket",
+            "name": "created",
+            "values": {"bucket": "new-bucket"},  # Missing tags
+            "actions": ["create"],
+        },
+        {
+            "address": "aws_s3_bucket.updated",
+            "type": "aws_s3_bucket",
+            "name": "updated",
+            "values": {"bucket": "existing-bucket"},  # Missing tags
+            "actions": ["update"],
+        },
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+
+    # Should find violations for BOTH resources
+    assert len(violations) == 2

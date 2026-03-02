@@ -230,6 +230,17 @@ class Rule(BaseModel):
         description="Property value must exist and not be empty (for dicts, lists, or strings)",
     )
 
+    # Action-based filtering
+    only_on_create: Optional[bool] = Field(
+        None,
+        description=(
+            "If true, only evaluate this rule for resources being created "
+            "(includes: ['create'], ['delete', 'create'], ['create', 'delete']). "
+            "Resources being updated in-place will be skipped. "
+            "Default: None (evaluate all resources)."
+        ),
+    )
+
     # Cross-resource relationship checking
     requires_resources: Optional[List[RequiredResource]] = Field(
         None,
@@ -424,4 +435,31 @@ class Rule(BaseModel):
             return resource_type == self.resource_type
         elif self.resource_types is not None:
             return resource_type in self.resource_types
+        return False
+
+    def is_creation_action(self, actions: List[str]) -> bool:
+        """Check if the given actions represent resource creation.
+
+        Creation includes:
+        - ["create"] - new resource
+        - ["delete", "create"] - standard replacement
+        - ["create", "delete"] - create_before_destroy replacement
+
+        Args:
+            actions: List of Terraform actions for the resource
+
+        Returns:
+            True if actions represent creation, False otherwise
+        """
+        if not actions:
+            return False
+
+        # Pure creation
+        if actions == ["create"]:
+            return True
+
+        # Replacement (both orderings)
+        if set(actions) == {"create", "delete"}:
+            return True
+
         return False
