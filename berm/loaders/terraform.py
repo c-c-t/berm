@@ -264,40 +264,98 @@ def extract_resource_references(plan_data: Dict[str, Any]) -> Dict[str, List[str
 def _process_module_references(
     module_config: Dict[str, Any],
     reference_map: Dict[str, List[str]],
+    module_prefix: str = "",
 ) -> None:
     """Recursively process a module configuration block to extract resource references.
 
-    Resource addresses within child_modules are already fully-qualified in the
-    Terraform plan JSON (e.g. "module.s3_bucket.aws_s3_bucket.this"), so no
-    prefix qualification is required.
+    Handles two Terraform plan JSON formats:
+    - child_modules (list): resources carry fully-qualified addresses already.
+      Used in planned_values and by some Terraform versions in configuration.
+    - module_calls (dict): resources carry relative addresses that must be
+      qualified with the module path prefix. Used in configuration by real
+      terraform show -json output.
 
     Args:
-        module_config: A module configuration block (root_module or a child_module entry)
+        module_config: A module configuration block (root_module or nested module)
         reference_map: Dictionary to populate with discovered references (modified in-place)
+        module_prefix: Fully-qualified prefix for the current module scope, e.g.
+            "module.s3_bucket". Empty string for root or already-qualified scopes.
     """
     for resource in module_config.get("resources", []):
         if not isinstance(resource, dict):
             continue
 
-        dependent_address = resource.get("address")
-        if not dependent_address:
+        raw_address = resource.get("address")
+        if not raw_address:
             continue
+
+        dependent_address = _qualify_module_address(raw_address, module_prefix)
 
         expressions = resource.get("expressions", {})
         if not isinstance(expressions, dict):
             continue
 
-        _extract_references_from_expressions(expressions, dependent_address, reference_map)
+        _extract_references_from_expressions(
+            expressions, dependent_address, reference_map, module_prefix
+        )
 
+    # child_modules format: addresses are already fully qualified, no prefix needed
     for child_module in module_config.get("child_modules", []):
         if isinstance(child_module, dict):
-            _process_module_references(child_module, reference_map)
+            _process_module_references(child_module, reference_map, module_prefix="")
+
+    # module_calls format: addresses are relative, must be qualified with the module path
+    module_calls = module_config.get("module_calls", {})
+    if isinstance(module_calls, dict):
+        for call_name, call_config in module_calls.items():
+            if not isinstance(call_config, dict):
+                continue
+            child_module = call_config.get("module", {})
+            if not isinstance(child_module, dict):
+                continue
+            child_prefix = (
+                f"{module_prefix}.{call_name}" if module_prefix else f"module.{call_name}"
+            )
+            _process_module_references(child_module, reference_map, child_prefix)
+
+
+_NON_RESOURCE_PREFIXES = (
+    "var.", "local.", "data.", "path.", "self.", "each.", "count.", "module.",
+)
+
+
+def _qualify_module_address(address: str, module_prefix: str) -> str:
+    """Qualify a relative resource address with a module prefix.
+
+    In the module_calls format, resource addresses inside a module are relative
+    (e.g. "aws_s3_bucket.this"). This prepends the module path to produce the
+    fully-qualified address that matches resource_changes
+    (e.g. "module.s3_bucket.aws_s3_bucket.this").
+
+    Addresses that are already absolute (start with "module.") or are not
+    resource references (var.*, local.*, data.*, etc.) are returned unchanged,
+    so this is safe to call unconditionally.
+
+    Args:
+        address: Possibly-relative address (e.g. "aws_s3_bucket.this")
+        module_prefix: Fully-qualified module prefix (e.g. "module.s3_bucket"),
+            or empty string when no qualification is needed.
+
+    Returns:
+        Fully-qualified address (e.g. "module.s3_bucket.aws_s3_bucket.this")
+    """
+    if not module_prefix or not address:
+        return address
+    if any(address.startswith(p) for p in _NON_RESOURCE_PREFIXES):
+        return address
+    return f"{module_prefix}.{address}"
 
 
 def _extract_references_from_expressions(
     expressions: Dict[str, Any],
     dependent_address: str,
     reference_map: Dict[str, List[str]],
+    module_prefix: str = "",
 ) -> None:
     """Recursively extract references from a Terraform expression tree.
 
@@ -305,6 +363,8 @@ def _extract_references_from_expressions(
         expressions: Dictionary of expression objects from Terraform configuration
         dependent_address: Address of the resource that owns these expressions
         reference_map: Dictionary to populate with discovered references (modified in-place)
+        module_prefix: Module prefix used to qualify relative reference addresses
+            (empty when addresses are already fully qualified)
     """
     if not isinstance(expressions, dict):
         return
@@ -316,17 +376,24 @@ def _extract_references_from_expressions(
                     if isinstance(ref, str):
                         target_address = _extract_address_from_reference(ref)
                         if target_address:
+                            target_address = _qualify_module_address(
+                                target_address, module_prefix
+                            )
                             if target_address not in reference_map:
                                 reference_map[target_address] = []
                             if dependent_address not in reference_map[target_address]:
                                 reference_map[target_address].append(dependent_address)
 
-            _extract_references_from_expressions(value, dependent_address, reference_map)
+            _extract_references_from_expressions(
+                value, dependent_address, reference_map, module_prefix
+            )
 
         elif isinstance(value, list):
             for item in value:
                 if isinstance(item, dict):
-                    _extract_references_from_expressions(item, dependent_address, reference_map)
+                    _extract_references_from_expressions(
+                        item, dependent_address, reference_map, module_prefix
+                    )
 
 
 def _extract_address_from_reference(reference: str) -> str:
@@ -411,20 +478,27 @@ def extract_constant_values(plan_data: Dict[str, Any]) -> Dict[str, Dict[str, An
 def _process_module_constants(
     module_config: Dict[str, Any],
     constant_map: Dict[str, Dict[str, Any]],
+    module_prefix: str = "",
 ) -> None:
     """Recursively process a module configuration block to extract constant values.
 
+    Handles both child_modules (fully-qualified addresses) and module_calls
+    (relative addresses) formats. See _process_module_references for details.
+
     Args:
-        module_config: A module configuration block (root_module or a child_module entry)
+        module_config: A module configuration block (root_module or nested module)
         constant_map: Dictionary to populate with discovered constant values (modified in-place)
+        module_prefix: Fully-qualified prefix for the current module scope.
     """
     for resource in module_config.get("resources", []):
         if not isinstance(resource, dict):
             continue
 
-        address = resource.get("address")
-        if not address:
+        raw_address = resource.get("address")
+        if not raw_address:
             continue
+
+        address = _qualify_module_address(raw_address, module_prefix)
 
         expressions = resource.get("expressions", {})
         if not isinstance(expressions, dict):
@@ -439,6 +513,21 @@ def _process_module_constants(
         if constants:
             constant_map[address] = constants
 
+    # child_modules format: addresses already fully qualified
     for child_module in module_config.get("child_modules", []):
         if isinstance(child_module, dict):
-            _process_module_constants(child_module, constant_map)
+            _process_module_constants(child_module, constant_map, module_prefix="")
+
+    # module_calls format: addresses are relative, must be qualified
+    module_calls = module_config.get("module_calls", {})
+    if isinstance(module_calls, dict):
+        for call_name, call_config in module_calls.items():
+            if not isinstance(call_config, dict):
+                continue
+            child_module = call_config.get("module", {})
+            if not isinstance(child_module, dict):
+                continue
+            child_prefix = (
+                f"{module_prefix}.{call_name}" if module_prefix else f"module.{call_name}"
+            )
+            _process_module_constants(child_module, constant_map, child_prefix)
