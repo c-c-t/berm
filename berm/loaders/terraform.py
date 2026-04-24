@@ -254,35 +254,69 @@ def extract_resource_references(plan_data: Dict[str, Any]) -> Dict[str, List[str
     if not isinstance(root_module, dict):
         return reference_map
 
-    config_resources = root_module.get("resources", [])
-    if not isinstance(config_resources, list):
-        return reference_map
+    # Process root module and all nested modules recursively
+    _process_module_references(root_module, module_prefix="", reference_map=reference_map)
 
-    # Process each resource configuration
+    return reference_map
+
+
+def _process_module_references(
+    module_config: Dict[str, Any],
+    module_prefix: str,
+    reference_map: Dict[str, List[str]],
+) -> None:
+    """Recursively process module configuration to extract resource references.
+
+    Args:
+        module_config: Module configuration object from Terraform plan
+        module_prefix: Fully-qualified module prefix (e.g. "module.s3_bucket")
+        reference_map: Dictionary to populate with discovered references
+    """
+    config_resources = module_config.get("resources", [])
+    if not isinstance(config_resources, list):
+        config_resources = []
+
     for resource in config_resources:
         if not isinstance(resource, dict):
             continue
 
-        dependent_address = resource.get("address")
-        if not dependent_address:
+        relative_address = resource.get("address")
+        if not relative_address:
             continue
+
+        dependent_address = (
+            f"{module_prefix}.{relative_address}" if module_prefix else relative_address
+        )
 
         expressions = resource.get("expressions", {})
         if not isinstance(expressions, dict):
             continue
 
-        # Extract references from all expression properties
         _extract_references_from_expressions(
-            expressions, dependent_address, reference_map
+            expressions, dependent_address, reference_map, module_prefix
         )
 
-    return reference_map
+    module_calls = module_config.get("module_calls", {})
+    if not isinstance(module_calls, dict):
+        return
+
+    for call_name, call_config in module_calls.items():
+        if not isinstance(call_config, dict):
+            continue
+        child_module = call_config.get("module", {})
+        if not isinstance(child_module, dict):
+            continue
+        child_prefix = (
+            f"{module_prefix}.{call_name}" if module_prefix else f"module.{call_name}"
+        )
+        _process_module_references(child_module, child_prefix, reference_map)
 
 
 def _extract_references_from_expressions(
     expressions: Dict[str, Any],
     dependent_address: str,
     reference_map: Dict[str, List[str]],
+    module_prefix: str = "",
 ) -> None:
     """Recursively extract references from expression objects.
 
@@ -308,21 +342,54 @@ def _extract_references_from_expressions(
                         # References can be like "aws_s3_bucket.example.id" or "aws_s3_bucket.example"
                         target_address = _extract_address_from_reference(ref)
                         if target_address:
+                            target_address = _qualify_module_address(
+                                target_address, module_prefix
+                            )
                             if target_address not in reference_map:
                                 reference_map[target_address] = []
                             if dependent_address not in reference_map[target_address]:
                                 reference_map[target_address].append(dependent_address)
 
             # Recursively process nested expressions
-            _extract_references_from_expressions(value, dependent_address, reference_map)
+            _extract_references_from_expressions(value, dependent_address, reference_map, module_prefix)
 
         elif isinstance(value, list):
             # Handle lists of expressions (e.g., for block resources)
             for item in value:
                 if isinstance(item, dict):
                     _extract_references_from_expressions(
-                        item, dependent_address, reference_map
+                        item, dependent_address, reference_map, module_prefix
                     )
+
+
+_NON_RESOURCE_PREFIXES = (
+    "var.", "local.", "data.", "path.", "self.", "each.", "count.", "module.",
+)
+
+
+def _qualify_module_address(address: str, module_prefix: str) -> str:
+    """Qualify a relative resource address with a module prefix.
+
+    References inside a module config are relative (e.g. "aws_s3_bucket.this").
+    This function prepends the module path to produce the fully-qualified address
+    that matches what Terraform emits in resource_changes
+    (e.g. "module.s3_bucket.aws_s3_bucket.this").
+
+    Addresses that are already absolute (start with "module.") or are not resource
+    references (var.*, local.*, data.*, etc.) are returned unchanged.
+
+    Args:
+        address: Extracted address, possibly relative (e.g. "aws_s3_bucket.this")
+        module_prefix: Fully-qualified module prefix (e.g. "module.s3_bucket")
+
+    Returns:
+        Fully-qualified address (e.g. "module.s3_bucket.aws_s3_bucket.this")
+    """
+    if not module_prefix or not address:
+        return address
+    if any(address.startswith(p) for p in _NON_RESOURCE_PREFIXES):
+        return address
+    return f"{module_prefix}.{address}"
 
 
 def _extract_address_from_reference(reference: str) -> str:
@@ -401,24 +468,44 @@ def extract_constant_values(plan_data: Dict[str, Any]) -> Dict[str, Dict[str, An
     if not isinstance(root_module, dict):
         return constant_map
 
-    config_resources = root_module.get("resources", [])
-    if not isinstance(config_resources, list):
-        return constant_map
+    # Process root module and all nested modules recursively
+    _process_module_constants(root_module, module_prefix="", constant_map=constant_map)
 
-    # Process each resource configuration
+    return constant_map
+
+
+def _process_module_constants(
+    module_config: Dict[str, Any],
+    module_prefix: str,
+    constant_map: Dict[str, Dict[str, Any]],
+) -> None:
+    """Recursively process module configuration to extract constant values.
+
+    Args:
+        module_config: Module configuration object from Terraform plan
+        module_prefix: Fully-qualified module prefix (e.g. "module.s3_bucket")
+        constant_map: Dictionary to populate with discovered constant values
+    """
+    config_resources = module_config.get("resources", [])
+    if not isinstance(config_resources, list):
+        config_resources = []
+
     for resource in config_resources:
         if not isinstance(resource, dict):
             continue
 
-        address = resource.get("address")
-        if not address:
+        relative_address = resource.get("address")
+        if not relative_address:
             continue
+
+        address = (
+            f"{module_prefix}.{relative_address}" if module_prefix else relative_address
+        )
 
         expressions = resource.get("expressions", {})
         if not isinstance(expressions, dict):
             continue
 
-        # Extract constant values from expressions
         constants = {}
         for key, value in expressions.items():
             if isinstance(value, dict) and "constant_value" in value:
@@ -427,4 +514,17 @@ def extract_constant_values(plan_data: Dict[str, Any]) -> Dict[str, Dict[str, An
         if constants:
             constant_map[address] = constants
 
-    return constant_map
+    module_calls = module_config.get("module_calls", {})
+    if not isinstance(module_calls, dict):
+        return
+
+    for call_name, call_config in module_calls.items():
+        if not isinstance(call_config, dict):
+            continue
+        child_module = call_config.get("module", {})
+        if not isinstance(child_module, dict):
+            continue
+        child_prefix = (
+            f"{module_prefix}.{call_name}" if module_prefix else f"module.{call_name}"
+        )
+        _process_module_constants(child_module, child_prefix, constant_map)
