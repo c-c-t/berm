@@ -172,6 +172,13 @@ class CrossResourceEvaluator:
                 # Skip this resource - rule only applies to creations
                 return []
 
+        # Check if rule should only apply to destructive actions
+        if rule.detect_destructive_actions:
+            actions = primary.get("actions", [])
+            if not rule.is_destructive_action(actions):
+                # Skip this resource - rule only applies to deletions/replacements
+                return []
+
         # Find related resources using appropriate strategy
         related_resources = self._find_related_resources(
             primary, required, resource_index, reference_map, constant_map

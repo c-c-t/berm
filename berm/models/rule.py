@@ -241,6 +241,16 @@ class Rule(BaseModel):
         ),
     )
 
+    detect_destructive_actions: Optional[bool] = Field(
+        None,
+        description=(
+            "If true, evaluate this rule for resources being deleted or replaced "
+            "(includes: ['delete'], ['delete', 'create'], ['create', 'delete']). "
+            "Requires resource_forbidden=True or action-based checking. "
+            "Default: None (normal filtering applies)."
+        ),
+    )
+
     # Cross-resource relationship checking
     requires_resources: Optional[List[RequiredResource]] = Field(
         None,
@@ -456,6 +466,33 @@ class Rule(BaseModel):
 
         # Pure creation
         if actions == ["create"]:
+            return True
+
+        # Replacement (both orderings)
+        if set(actions) == {"create", "delete"}:
+            return True
+
+        return False
+
+    def is_destructive_action(self, actions: List[str]) -> bool:
+        """Check if the given actions represent resource deletion or replacement.
+
+        Destructive actions include:
+        - ["delete"] - resource deletion
+        - ["delete", "create"] - standard replacement
+        - ["create", "delete"] - create_before_destroy replacement
+
+        Args:
+            actions: List of Terraform actions for the resource
+
+        Returns:
+            True if actions represent deletion or replacement, False otherwise
+        """
+        if not actions:
+            return False
+
+        # Pure deletion
+        if actions == ["delete"]:
             return True
 
         # Replacement (both orderings)

@@ -19,16 +19,18 @@ class TerraformPlanLoadError(Exception):
     pass
 
 
-def load_terraform_plan(plan_path: str, _allow_absolute: bool = False) -> List[Dict[str, Any]]:
+def load_terraform_plan(plan_path: str, _allow_absolute: bool = False, include_deletions: bool = False) -> List[Dict[str, Any]]:
     """Load and parse a Terraform plan JSON file.
 
     Extracts resource changes from the plan and normalizes them for evaluation.
     Only includes resources that are being created, updated, or replaced.
-    Excludes resources that are being deleted or unchanged (no-op).
+    Excludes resources that are being deleted or unchanged (no-op) unless
+    include_deletions=True.
 
     Args:
         plan_path: Path to Terraform plan JSON file (output of 'terraform show -json')
         _allow_absolute: Internal parameter for testing - allows absolute paths
+        include_deletions: If True, include resources being deleted (default: False)
 
     Returns:
         List of resource dictionaries with normalized structure:
@@ -98,8 +100,11 @@ def load_terraform_plan(plan_path: str, _allow_absolute: bool = False) -> List[D
             # Get action type
             actions = change.get("change", {}).get("actions", [])
 
-            # Skip resources being deleted or no-op
-            if not actions or actions == ["delete"] or actions == ["no-op"]:
+            # Skip resources being deleted or no-op (unless include_deletions=True)
+            if not actions or actions == ["no-op"]:
+                continue
+
+            if actions == ["delete"] and not include_deletions:
                 continue
 
             # Extract resource details
@@ -254,29 +259,48 @@ def extract_resource_references(plan_data: Dict[str, Any]) -> Dict[str, List[str
     if not isinstance(root_module, dict):
         return reference_map
 
-    config_resources = root_module.get("resources", [])
-    if not isinstance(config_resources, list):
-        return reference_map
-
-    # Process each resource configuration
-    for resource in config_resources:
-        if not isinstance(resource, dict):
-            continue
-
-        dependent_address = resource.get("address")
-        if not dependent_address:
-            continue
-
-        expressions = resource.get("expressions", {})
-        if not isinstance(expressions, dict):
-            continue
-
-        # Extract references from all expression properties
-        _extract_references_from_expressions(
-            expressions, dependent_address, reference_map
-        )
+    # Process root module and all child modules recursively
+    _extract_references_from_module(root_module, reference_map)
 
     return reference_map
+
+
+def _extract_references_from_module(
+    module: Dict[str, Any],
+    reference_map: Dict[str, List[str]],
+) -> None:
+    """Recursively extract references from a module and its child modules.
+
+    Args:
+        module: Module configuration dictionary (root_module or child module)
+        reference_map: Dictionary to populate with discovered references (modified in-place)
+    """
+    # Process resources in this module
+    config_resources = module.get("resources", [])
+    if isinstance(config_resources, list):
+        for resource in config_resources:
+            if not isinstance(resource, dict):
+                continue
+
+            dependent_address = resource.get("address")
+            if not dependent_address:
+                continue
+
+            expressions = resource.get("expressions", {})
+            if not isinstance(expressions, dict):
+                continue
+
+            # Extract references from all expression properties
+            _extract_references_from_expressions(
+                expressions, dependent_address, reference_map
+            )
+
+    # Recursively process child modules
+    child_modules = module.get("child_modules", [])
+    if isinstance(child_modules, list):
+        for child_module in child_modules:
+            if isinstance(child_module, dict):
+                _extract_references_from_module(child_module, reference_map)
 
 
 def _extract_references_from_expressions(
@@ -401,30 +425,49 @@ def extract_constant_values(plan_data: Dict[str, Any]) -> Dict[str, Dict[str, An
     if not isinstance(root_module, dict):
         return constant_map
 
-    config_resources = root_module.get("resources", [])
-    if not isinstance(config_resources, list):
-        return constant_map
-
-    # Process each resource configuration
-    for resource in config_resources:
-        if not isinstance(resource, dict):
-            continue
-
-        address = resource.get("address")
-        if not address:
-            continue
-
-        expressions = resource.get("expressions", {})
-        if not isinstance(expressions, dict):
-            continue
-
-        # Extract constant values from expressions
-        constants = {}
-        for key, value in expressions.items():
-            if isinstance(value, dict) and "constant_value" in value:
-                constants[key] = value["constant_value"]
-
-        if constants:
-            constant_map[address] = constants
+    # Process root module and all child modules recursively
+    _extract_constants_from_module(root_module, constant_map)
 
     return constant_map
+
+
+def _extract_constants_from_module(
+    module: Dict[str, Any],
+    constant_map: Dict[str, Dict[str, Any]],
+) -> None:
+    """Recursively extract constant values from a module and its child modules.
+
+    Args:
+        module: Module configuration dictionary (root_module or child module)
+        constant_map: Dictionary to populate with discovered constants (modified in-place)
+    """
+    # Process resources in this module
+    config_resources = module.get("resources", [])
+    if isinstance(config_resources, list):
+        for resource in config_resources:
+            if not isinstance(resource, dict):
+                continue
+
+            address = resource.get("address")
+            if not address:
+                continue
+
+            expressions = resource.get("expressions", {})
+            if not isinstance(expressions, dict):
+                continue
+
+            # Extract constant values from expressions
+            constants = {}
+            for key, value in expressions.items():
+                if isinstance(value, dict) and "constant_value" in value:
+                    constants[key] = value["constant_value"]
+
+            if constants:
+                constant_map[address] = constants
+
+    # Recursively process child modules
+    child_modules = module.get("child_modules", [])
+    if isinstance(child_modules, list):
+        for child_module in child_modules:
+            if isinstance(child_module, dict):
+                _extract_constants_from_module(child_module, constant_map)
