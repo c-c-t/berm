@@ -586,3 +586,72 @@ def test_rule_is_creation_action():
     assert rule.is_creation_action([]) is False
     assert rule.is_creation_action(["delete"]) is False
     assert rule.is_creation_action(["no-op"]) is False
+
+
+def test_rule_detect_destructive_actions_valid():
+    """Test creating a rule with detect_destructive_actions field."""
+    rule = Rule(
+        id="test",
+        name="Test",
+        resource_type="aws_db_instance",
+        severity="warning",
+        resource_forbidden=True,
+        detect_destructive_actions=True,
+        message="Critical resource {{resource_name}} is being deleted or replaced",
+    )
+
+    assert rule.detect_destructive_actions is True
+
+
+def test_rule_detect_destructive_actions_optional():
+    """Test that detect_destructive_actions is optional and defaults to None."""
+    rule = Rule(
+        id="test",
+        name="Test",
+        resource_type="aws_s3_bucket",
+        severity="error",
+        property="tags",
+        contains="Environment",
+        message="msg",
+    )
+
+    assert rule.detect_destructive_actions is None
+
+
+def test_rule_is_destructive_action():
+    """Test the is_destructive_action helper method."""
+    rule = Rule(
+        id="test",
+        name="Test",
+        resource_type="aws_db_instance",
+        severity="warning",
+        resource_forbidden=True,
+        message="msg",
+    )
+
+    # Destructive actions
+    assert rule.is_destructive_action(["delete"]) is True
+    assert rule.is_destructive_action(["delete", "create"]) is True
+    assert rule.is_destructive_action(["create", "delete"]) is True
+
+    # Non-destructive actions
+    assert rule.is_destructive_action(["create"]) is False
+    assert rule.is_destructive_action(["update"]) is False
+    assert rule.is_destructive_action([]) is False
+    assert rule.is_destructive_action(["no-op"]) is False
+
+
+def test_rule_detect_destructive_actions_with_resource_types():
+    """Test detect_destructive_actions with multiple resource types."""
+    rule = Rule(
+        id="critical-destruction",
+        name="Critical resources being destroyed",
+        resource_types=["aws_db_instance", "aws_mwaa_environment", "aws_instance"],
+        severity="warning",
+        resource_forbidden=True,
+        detect_destructive_actions=True,
+        message="Critical resource {{resource_name}} is being deleted or replaced",
+    )
+
+    assert rule.detect_destructive_actions is True
+    assert rule.resource_types == ["aws_db_instance", "aws_mwaa_environment", "aws_instance"]

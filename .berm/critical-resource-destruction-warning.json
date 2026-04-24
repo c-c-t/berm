@@ -1,0 +1,16 @@
+{
+  "id": "critical-resource-destruction-warning",
+  "name": "Critical resources are being deleted or replaced",
+  "resource_types": [
+    "aws_mwaa_environment",
+    "aws_db_instance",
+    "aws_rds_cluster",
+    "aws_elasticache_cluster",
+    "aws_elasticache_replication_group",
+    "aws_instance"
+  ],
+  "severity": "warning",
+  "resource_forbidden": true,
+  "detect_destructive_actions": true,
+  "message": "Critical resource {{resource_name}} is being deleted or replaced. This may cause service disruption. Please review carefully before applying."
+}

@@ -523,3 +523,165 @@ def test_cross_resource_only_on_create_filters_updates():
     # Should only find violation for created bucket, not updated one
     assert len(violations) == 1
     assert violations[0].resource_name == "aws_s3_bucket.created"
+
+
+def test_evaluate_module_resources_with_references():
+    """Test that cross-resource evaluation works for resources in submodules."""
+    evaluator = CrossResourceEvaluator()
+
+    # Resources from a submodule
+    resources = [
+        {
+            "address": "module.s3_module.aws_s3_bucket.example",
+            "type": "aws_s3_bucket",
+            "name": "example",
+            "values": {"bucket": "my-module-bucket"},
+        },
+        {
+            "address": "module.s3_module.aws_s3_bucket_versioning.example",
+            "type": "aws_s3_bucket_versioning",
+            "name": "example",
+            "values": {
+                "bucket": "my-module-bucket",
+                "versioning_configuration": [{"status": "Enabled"}],
+            },
+        },
+        {
+            "address": "module.s3_module.aws_s3_bucket.no_versioning",
+            "type": "aws_s3_bucket",
+            "name": "no_versioning",
+            "values": {"bucket": "my-other-bucket"},
+        },
+    ]
+
+    # Plan data with module resources
+    plan_data = {
+        "configuration": {
+            "root_module": {
+                "resources": [],
+                "child_modules": [
+                    {
+                        "address": "module.s3_module",
+                        "resources": [
+                            {
+                                "address": "module.s3_module.aws_s3_bucket.example",
+                                "expressions": {
+                                    "bucket": {"constant_value": "my-module-bucket"}
+                                }
+                            },
+                            {
+                                "address": "module.s3_module.aws_s3_bucket_versioning.example",
+                                "expressions": {
+                                    "bucket": {
+                                        "references": ["module.s3_module.aws_s3_bucket.example.id"]
+                                    }
+                                }
+                            },
+                            {
+                                "address": "module.s3_module.aws_s3_bucket.no_versioning",
+                                "expressions": {
+                                    "bucket": {"constant_value": "my-other-bucket"}
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+
+    rule = Rule(
+        id="s3-requires-versioning",
+        name="S3 buckets must have versioning",
+        resource_type="aws_s3_bucket",
+        severity="error",
+        requires_resources=[
+            RequiredResource(
+                resource_type="aws_s3_bucket_versioning",
+                relationship="referenced_by_primary",
+                reference_property="bucket",
+                min_count=1,
+            )
+        ],
+        message="S3 bucket {{resource_name}} must have versioning configured",
+    )
+
+    violations = evaluator.evaluate(rule, resources, plan_data)
+
+    # Should find 1 violation: no_versioning bucket missing versioning
+    assert len(violations) == 1
+    assert violations[0].resource_name == "module.s3_module.aws_s3_bucket.no_versioning"
+    assert "Missing required aws_s3_bucket_versioning" in violations[0].message
+
+
+def test_evaluate_module_resources_with_static_values():
+    """Test that cross-resource evaluation works for module resources with static bucket names."""
+    evaluator = CrossResourceEvaluator()
+
+    # Resources from a submodule using hardcoded bucket names
+    resources = [
+        {
+            "address": "module.s3_module.aws_s3_bucket.example",
+            "type": "aws_s3_bucket",
+            "name": "example",
+            "values": {"bucket": "hardcoded-bucket-name"},
+        },
+        {
+            "address": "module.s3_module.aws_s3_bucket_versioning.example",
+            "type": "aws_s3_bucket_versioning",
+            "name": "example",
+            "values": {
+                "bucket": "hardcoded-bucket-name",
+                "versioning_configuration": [{"status": "Enabled"}],
+            },
+        },
+    ]
+
+    # Plan data with static constant values in child module
+    plan_data = {
+        "configuration": {
+            "root_module": {
+                "resources": [],
+                "child_modules": [
+                    {
+                        "address": "module.s3_module",
+                        "resources": [
+                            {
+                                "address": "module.s3_module.aws_s3_bucket.example",
+                                "expressions": {
+                                    "bucket": {"constant_value": "hardcoded-bucket-name"}
+                                }
+                            },
+                            {
+                                "address": "module.s3_module.aws_s3_bucket_versioning.example",
+                                "expressions": {
+                                    "bucket": {"constant_value": "hardcoded-bucket-name"}
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+
+    rule = Rule(
+        id="s3-requires-versioning",
+        name="S3 buckets must have versioning",
+        resource_type="aws_s3_bucket",
+        severity="error",
+        requires_resources=[
+            RequiredResource(
+                resource_type="aws_s3_bucket_versioning",
+                relationship="referenced_by_primary",
+                reference_property="bucket",
+                min_count=1,
+            )
+        ],
+        message="S3 bucket {{resource_name}} must have versioning configured",
+    )
+
+    violations = evaluator.evaluate(rule, resources, plan_data)
+
+    # Should find no violations - versioning resource exists with matching bucket name
+    assert len(violations) == 0
