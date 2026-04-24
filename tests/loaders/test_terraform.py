@@ -102,6 +102,81 @@ def test_load_terraform_plan_excludes_deleted(tmp_path):
     assert resources[0]["address"] == "aws_s3_bucket.kept"
 
 
+def test_load_terraform_plan_includes_deletions_when_requested(tmp_path):
+    """Test that deleted resources are included when include_deletions=True."""
+    plan_data = {
+        "resource_changes": [
+            {
+                "address": "aws_s3_bucket.kept",
+                "type": "aws_s3_bucket",
+                "name": "kept",
+                "change": {
+                    "actions": ["create"],
+                    "after": {"bucket": "my-bucket"},
+                },
+            },
+            {
+                "address": "aws_db_instance.deleted",
+                "type": "aws_db_instance",
+                "name": "deleted",
+                "change": {
+                    "actions": ["delete"],
+                    "before": {"identifier": "old-db"},
+                    "after": None,
+                },
+            },
+        ]
+    }
+
+    plan_file = tmp_path / "plan.json"
+    with open(plan_file, "w") as f:
+        json.dump(plan_data, f)
+
+    resources = load_terraform_plan(str(plan_file), _allow_absolute=True, include_deletions=True)
+
+    # Should include both the created and deleted resources
+    assert len(resources) == 2
+    addresses = {r["address"] for r in resources}
+    assert "aws_s3_bucket.kept" in addresses
+    assert "aws_db_instance.deleted" in addresses
+
+    # Verify the deleted resource has the correct action
+    deleted = next(r for r in resources if r["address"] == "aws_db_instance.deleted")
+    assert deleted["actions"] == ["delete"]
+
+
+def test_load_terraform_plan_includes_replacements_always(tmp_path):
+    """Test that replaced resources are always included regardless of include_deletions flag."""
+    plan_data = {
+        "resource_changes": [
+            {
+                "address": "aws_db_instance.replaced",
+                "type": "aws_db_instance",
+                "name": "replaced",
+                "change": {
+                    "actions": ["delete", "create"],
+                    "before": {"identifier": "old-db"},
+                    "after": {"identifier": "new-db"},
+                },
+            },
+        ]
+    }
+
+    plan_file = tmp_path / "plan.json"
+    with open(plan_file, "w") as f:
+        json.dump(plan_data, f)
+
+    # Test without include_deletions
+    resources_no_flag = load_terraform_plan(str(plan_file), _allow_absolute=True, include_deletions=False)
+    assert len(resources_no_flag) == 1
+    assert resources_no_flag[0]["actions"] == ["delete", "create"]
+
+    # Test with include_deletions (should still be included)
+    resources_with_flag = load_terraform_plan(str(plan_file), _allow_absolute=True, include_deletions=True)
+    assert len(resources_with_flag) == 1
+    assert resources_with_flag[0]["actions"] == ["delete", "create"]
+
+
 def test_load_terraform_plan_excludes_noop(tmp_path):
     """Test that no-op resources are excluded."""
     plan_data = {
@@ -546,3 +621,140 @@ def test_extract_constant_values_missing_configuration():
 
     # Should return empty dict without error
     assert constants == {}
+
+
+def test_extract_resource_references_from_child_modules():
+    """Test extracting references from resources in child modules (submodules)."""
+    plan_data = {
+        "configuration": {
+            "root_module": {
+                "resources": [
+                    {
+                        "address": "aws_s3_bucket.root_bucket",
+                        "expressions": {
+                            "bucket": {"constant_value": "root-bucket"}
+                        }
+                    }
+                ],
+                "child_modules": [
+                    {
+                        "address": "module.s3_module",
+                        "resources": [
+                            {
+                                "address": "module.s3_module.aws_s3_bucket.example",
+                                "expressions": {
+                                    "bucket": {"constant_value": "module-bucket"}
+                                }
+                            },
+                            {
+                                "address": "module.s3_module.aws_s3_bucket_versioning.example",
+                                "expressions": {
+                                    "bucket": {
+                                        "references": ["module.s3_module.aws_s3_bucket.example.id"]
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+
+    references = extract_resource_references(plan_data)
+
+    # Should extract references from both root and child modules
+    assert "module.s3_module.aws_s3_bucket.example" in references
+    assert "module.s3_module.aws_s3_bucket_versioning.example" in references["module.s3_module.aws_s3_bucket.example"]
+
+
+def test_extract_resource_references_from_nested_child_modules():
+    """Test extracting references from deeply nested child modules."""
+    plan_data = {
+        "configuration": {
+            "root_module": {
+                "resources": [],
+                "child_modules": [
+                    {
+                        "address": "module.network",
+                        "resources": [
+                            {
+                                "address": "module.network.aws_vpc.main",
+                                "expressions": {}
+                            }
+                        ],
+                        "child_modules": [
+                            {
+                                "address": "module.network.module.subnets",
+                                "resources": [
+                                    {
+                                        "address": "module.network.module.subnets.aws_subnet.private",
+                                        "expressions": {
+                                            "vpc_id": {
+                                                "references": ["module.network.aws_vpc.main.id"]
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+
+    references = extract_resource_references(plan_data)
+
+    # Should extract references from nested modules
+    assert "module.network.aws_vpc.main" in references
+    assert "module.network.module.subnets.aws_subnet.private" in references["module.network.aws_vpc.main"]
+
+
+def test_extract_constant_values_from_child_modules():
+    """Test extracting constant values from resources in child modules."""
+    plan_data = {
+        "configuration": {
+            "root_module": {
+                "resources": [
+                    {
+                        "address": "aws_s3_bucket.root",
+                        "expressions": {
+                            "bucket": {"constant_value": "root-bucket"}
+                        }
+                    }
+                ],
+                "child_modules": [
+                    {
+                        "address": "module.s3_module",
+                        "resources": [
+                            {
+                                "address": "module.s3_module.aws_s3_bucket.example",
+                                "expressions": {
+                                    "bucket": {"constant_value": "module-bucket-123"}
+                                }
+                            },
+                            {
+                                "address": "module.s3_module.aws_s3_bucket_versioning.example",
+                                "expressions": {
+                                    "bucket": {"constant_value": "module-bucket-123"}
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+
+    constants = extract_constant_values(plan_data)
+
+    # Should extract constants from both root and child modules
+    assert "aws_s3_bucket.root" in constants
+    assert constants["aws_s3_bucket.root"]["bucket"] == "root-bucket"
+
+    assert "module.s3_module.aws_s3_bucket.example" in constants
+    assert constants["module.s3_module.aws_s3_bucket.example"]["bucket"] == "module-bucket-123"
+
+    assert "module.s3_module.aws_s3_bucket_versioning.example" in constants
+    assert constants["module.s3_module.aws_s3_bucket_versioning.example"]["bucket"] == "module-bucket-123"

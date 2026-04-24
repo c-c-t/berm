@@ -538,11 +538,18 @@ def run_check(
         # Auto-detect and convert binary plan files
         plan_file = _ensure_json_plan(plan_file, verbose)
 
+        # Check if any rules need deletions
+        include_deletions = any(
+            rule.detect_destructive_actions for rule in rules
+        )
+
         # Load Terraform plan
         if verbose:
             click.echo(f"Loading Terraform plan: {plan_file}")
+            if include_deletions:
+                click.echo("Including deleted resources for destructive action detection")
 
-        resources = load_terraform_plan(plan_file)
+        resources = load_terraform_plan(plan_file, include_deletions=include_deletions)
 
         if verbose:
             click.echo(f"Loaded {len(resources)} resource(s)")

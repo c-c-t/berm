@@ -620,3 +620,142 @@ def test_evaluator_without_only_on_create_evaluates_all():
 
     # Should find violations for BOTH resources
     assert len(violations) == 2
+
+
+def test_evaluator_detect_destructive_actions_filters_creates():
+    """Test that detect_destructive_actions rules skip create-only actions."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="critical-deletion",
+        name="Critical resource being deleted",
+        resource_type="aws_db_instance",
+        severity="warning",
+        resource_forbidden=True,
+        detect_destructive_actions=True,
+        message="Critical resource {{resource_name}} is being deleted or replaced",
+    )
+
+    resources = [
+        {
+            "address": "aws_db_instance.created",
+            "type": "aws_db_instance",
+            "name": "created",
+            "values": {"identifier": "new-db"},
+            "actions": ["create"],
+        },
+        {
+            "address": "aws_db_instance.deleted",
+            "type": "aws_db_instance",
+            "name": "deleted",
+            "values": {"identifier": "old-db"},
+            "actions": ["delete"],
+        },
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+
+    # Should only find violation for the deleted resource
+    assert len(violations) == 1
+    assert violations[0].resource_name == "aws_db_instance.deleted"
+
+
+def test_evaluator_detect_destructive_actions_includes_replacements():
+    """Test that detect_destructive_actions rules apply to replacement actions."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="critical-replacement",
+        name="Critical resource being replaced",
+        resource_type="aws_mwaa_environment",
+        severity="warning",
+        resource_forbidden=True,
+        detect_destructive_actions=True,
+        message="Critical resource {{resource_name}} is being deleted or replaced",
+    )
+
+    resources = [
+        {
+            "address": "aws_mwaa_environment.replaced_standard",
+            "type": "aws_mwaa_environment",
+            "name": "replaced_standard",
+            "values": {"name": "airflow"},
+            "actions": ["delete", "create"],
+        },
+        {
+            "address": "aws_mwaa_environment.replaced_cbd",
+            "type": "aws_mwaa_environment",
+            "name": "replaced_cbd",
+            "values": {"name": "airflow2"},
+            "actions": ["create", "delete"],
+        },
+        {
+            "address": "aws_mwaa_environment.updated",
+            "type": "aws_mwaa_environment",
+            "name": "updated",
+            "values": {"name": "airflow3"},
+            "actions": ["update"],
+        },
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+
+    # Should find violations for both replaced resources, but not the updated one
+    assert len(violations) == 2
+    addresses = [v.resource_name for v in violations]
+    assert "aws_mwaa_environment.replaced_standard" in addresses
+    assert "aws_mwaa_environment.replaced_cbd" in addresses
+
+
+def test_evaluator_detect_destructive_actions_with_multiple_resource_types():
+    """Test detect_destructive_actions with multiple resource types."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="critical-destruction",
+        name="Critical resources being destroyed",
+        resource_types=["aws_db_instance", "aws_mwaa_environment", "aws_instance"],
+        severity="warning",
+        resource_forbidden=True,
+        detect_destructive_actions=True,
+        message="Critical resource {{resource_name}} is being deleted or replaced",
+    )
+
+    resources = [
+        {
+            "address": "aws_db_instance.deleted",
+            "type": "aws_db_instance",
+            "name": "deleted",
+            "values": {"identifier": "db"},
+            "actions": ["delete"],
+        },
+        {
+            "address": "aws_mwaa_environment.replaced",
+            "type": "aws_mwaa_environment",
+            "name": "replaced",
+            "values": {"name": "airflow"},
+            "actions": ["delete", "create"],
+        },
+        {
+            "address": "aws_instance.created",
+            "type": "aws_instance",
+            "name": "created",
+            "values": {"id": "i-123"},
+            "actions": ["create"],
+        },
+        {
+            "address": "aws_s3_bucket.deleted",
+            "type": "aws_s3_bucket",
+            "name": "deleted",
+            "values": {"bucket": "test"},
+            "actions": ["delete"],
+        },
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+
+    # Should find violations for deleted DB and replaced MWAA, but not created instance or deleted S3
+    assert len(violations) == 2
+    addresses = [v.resource_name for v in violations]
+    assert "aws_db_instance.deleted" in addresses
+    assert "aws_mwaa_environment.replaced" in addresses

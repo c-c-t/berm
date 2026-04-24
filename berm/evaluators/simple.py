@@ -89,6 +89,13 @@ class SimpleEvaluator:
                 # Skip this resource - rule only applies to creations
                 return None
 
+        # Check if rule should only apply to destructive actions
+        if rule.detect_destructive_actions:
+            actions = resource.get("actions", [])
+            if not rule.is_destructive_action(actions):
+                # Skip this resource - rule only applies to deletions/replacements
+                return None
+
         # Check if this is a forbidden resource rule
         if rule.resource_forbidden is True:
             # Any instance of this resource type is a violation
