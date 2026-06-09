@@ -110,8 +110,10 @@ class SimpleEvaluator:
                 message=message,
             )
 
-        # For property-based rules, get the property value using dot notation
-        actual_value = get_nested_property(values, rule.property)
+        # For property-based rules, get the property value using dot notation.
+        # Tag lookups transparently prefer the effective tag set (tags_all) so
+        # that provider default_tags are honored (see _resolve_property_value).
+        actual_value = self._resolve_property_value(values, rule.property)
 
         # Check if property exists
         if actual_value is None:
@@ -179,6 +181,40 @@ class SimpleEvaluator:
 
         # No violation - resource complies
         return None
+
+    def _resolve_property_value(
+        self, values: Dict[str, Any], property_path: str
+    ) -> Any:
+        """Resolve a property value, honoring AWS provider default_tags.
+
+        When the AWS provider uses a ``default_tags`` block, Terraform exposes
+        two attributes on each resource:
+
+        - ``tags``: tags set directly on the resource (often null/empty when all
+          tags are supplied by the provider).
+        - ``tags_all``: the effective, merged set (provider default_tags +
+          resource-level tags).
+
+        Policies almost always care about the *effective* tags, so for any rule
+        targeting ``tags`` (or a nested key like ``tags.Application``) we prefer
+        the corresponding ``tags_all`` path and fall back to ``tags`` only when
+        ``tags_all`` is absent (e.g. non-AWS resources or plans without
+        default_tags). All other properties resolve normally.
+
+        Args:
+            values: Resource ``values`` dictionary from the normalized plan
+            property_path: Dot-notation property path from the rule
+
+        Returns:
+            The resolved value (None if not found)
+        """
+        if property_path == "tags" or property_path.startswith("tags."):
+            tags_all_path = "tags_all" + property_path[len("tags"):]
+            effective = get_nested_property(values, tags_all_path)
+            if effective is not None:
+                return effective
+
+        return get_nested_property(values, property_path)
 
     def _check_equals(self, actual: Any, expected: Any) -> bool:
         """Compare two values for equality.

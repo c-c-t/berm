@@ -298,6 +298,164 @@ def test_evaluator_is_not_empty_none():
     assert "not found" in violations[0].message
 
 
+def test_evaluator_tags_all_fallback_when_tags_empty():
+    """Provider default_tags: tags is null/empty but tags_all carries the tags."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="required-tags",
+        name="Required Application tag",
+        resource_type="aws_iam_instance_profile",
+        severity="error",
+        property="tags",
+        has_keys=["Application"],
+        message="Resource {{resource_name}} must have Application tags",
+    )
+
+    resources = [
+        # tags is None (set entirely via provider default_tags)
+        {
+            "address": "module.api.aws_iam_instance_profile.api_ec2",
+            "type": "aws_iam_instance_profile",
+            "name": "api_ec2",
+            "values": {
+                "tags": None,
+                "tags_all": {"Application": "api", "Environment": "prod"},
+            },
+        },
+        # tags is an empty dict
+        {
+            "address": "module.api.aws_iam_instance_profile.api_ec2_2",
+            "type": "aws_iam_instance_profile",
+            "name": "api_ec2_2",
+            "values": {
+                "tags": {},
+                "tags_all": {"Application": "api"},
+            },
+        },
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+    assert len(violations) == 0
+
+
+def test_evaluator_tags_all_supersedes_partial_tags():
+    """tags has some keys, the required one comes from default_tags via tags_all."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="required-tags",
+        name="Required Application tag",
+        resource_type="aws_s3_bucket",
+        severity="error",
+        property="tags",
+        has_keys=["Application"],
+        message="Must have Application tag",
+    )
+
+    resources = [
+        {
+            "address": "aws_s3_bucket.b",
+            "type": "aws_s3_bucket",
+            "name": "b",
+            "values": {
+                "tags": {"Environment": "prod"},
+                "tags_all": {"Environment": "prod", "Application": "billing"},
+            },
+        }
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+    assert len(violations) == 0
+
+
+def test_evaluator_tags_all_nested_key_fallback():
+    """Nested tag path (tags.Application) resolves via tags_all."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="app-tag-value",
+        name="Application tag must be set",
+        resource_type="aws_s3_bucket",
+        severity="error",
+        property="tags.Application",
+        is_not_empty=True,
+        message="Application tag required",
+    )
+
+    resources = [
+        {
+            "address": "aws_s3_bucket.b",
+            "type": "aws_s3_bucket",
+            "name": "b",
+            "values": {
+                "tags": None,
+                "tags_all": {"Application": "billing"},
+            },
+        }
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+    assert len(violations) == 0
+
+
+def test_evaluator_tags_still_fails_when_tags_all_missing_key():
+    """Effective tags (tags_all) genuinely missing the key still violates."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="required-tags",
+        name="Required Application tag",
+        resource_type="aws_iam_instance_profile",
+        severity="error",
+        property="tags",
+        has_keys=["Application"],
+        message="Must have Application tag",
+    )
+
+    resources = [
+        {
+            "address": "aws_iam_instance_profile.p",
+            "type": "aws_iam_instance_profile",
+            "name": "p",
+            "values": {
+                "tags": None,
+                "tags_all": {"Environment": "prod"},  # no Application
+            },
+        }
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+    assert len(violations) == 1
+
+
+def test_evaluator_tags_without_tags_all_uses_tags():
+    """Plans without default_tags (no tags_all) still evaluate tags directly."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="required-tags",
+        name="Required Application tag",
+        resource_type="aws_s3_bucket",
+        severity="error",
+        property="tags",
+        has_keys=["Application"],
+        message="Must have Application tag",
+    )
+
+    resources = [
+        {
+            "address": "aws_s3_bucket.b",
+            "type": "aws_s3_bucket",
+            "name": "b",
+            "values": {"tags": {"Application": "x"}},  # no tags_all present
+        }
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+    assert len(violations) == 0
+
+
 def test_evaluator_backwards_compatibility_single_resource_type():
     """Test that existing rules with single resource_type still work."""
     evaluator = SimpleEvaluator()
