@@ -102,6 +102,47 @@ def test_load_terraform_plan_excludes_deleted(tmp_path):
     assert resources[0]["address"] == "aws_s3_bucket.kept"
 
 
+def test_load_terraform_plan_captures_mode(tmp_path):
+    """Test that resource mode (managed/data) is captured and defaults to managed."""
+    plan_data = {
+        "resource_changes": [
+            {
+                "address": "aws_instance.web",
+                "mode": "managed",
+                "type": "aws_instance",
+                "name": "web",
+                "change": {"actions": ["create"], "after": {"instance_type": "t3.micro"}},
+            },
+            {
+                "address": "data.aws_ami.ubuntu",
+                "mode": "data",
+                "type": "aws_ami",
+                "name": "ubuntu",
+                "change": {"actions": ["read"], "after": {"id": "ami-123"}},
+            },
+            {
+                # No mode key at all -> should default to "managed"
+                "address": "aws_s3_bucket.legacy",
+                "type": "aws_s3_bucket",
+                "name": "legacy",
+                "change": {"actions": ["create"], "after": {"bucket": "b"}},
+            },
+        ]
+    }
+
+    plan_file = tmp_path / "plan.json"
+    with open(plan_file, "w") as f:
+        json.dump(plan_data, f)
+
+    resources = load_terraform_plan(str(plan_file), _allow_absolute=True)
+    by_address = {r["address"]: r for r in resources}
+
+    assert by_address["aws_instance.web"]["mode"] == "managed"
+    assert by_address["data.aws_ami.ubuntu"]["mode"] == "data"
+    # Default when the plan omits mode
+    assert by_address["aws_s3_bucket.legacy"]["mode"] == "managed"
+
+
 def test_load_terraform_plan_includes_deletions_when_requested(tmp_path):
     """Test that deleted resources are included when include_deletions=True."""
     plan_data = {

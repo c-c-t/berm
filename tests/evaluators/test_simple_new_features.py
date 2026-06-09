@@ -456,6 +456,189 @@ def test_evaluator_tags_without_tags_all_uses_tags():
     assert len(violations) == 0
 
 
+def test_evaluator_skips_data_source_by_mode():
+    """Data sources (mode == 'data') are not taggable and must be skipped."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="required-tags",
+        name="Required Application tag",
+        resource_type="aws_ami",
+        severity="error",
+        property="tags",
+        has_keys=["Application"],
+        message="{{resource_name}} must have Application tags",
+    )
+
+    resources = [
+        {
+            "address": "module.api.data.aws_ami.ubuntu",
+            "type": "aws_ami",
+            "name": "ubuntu",
+            "mode": "data",
+            "values": {},  # data sources expose no settable tags
+        }
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+    assert len(violations) == 0
+
+
+def test_evaluator_skips_data_source_by_address():
+    """Fallback: a data.* address is skipped even if mode is absent."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="required-tags",
+        name="Required Application tag",
+        resource_type="aws_ami",
+        severity="error",
+        property="tags",
+        has_keys=["Application"],
+        message="{{resource_name}} must have Application tags",
+    )
+
+    resources = [
+        {
+            "address": "data.aws_ami.ubuntu",
+            "type": "aws_ami",
+            "name": "ubuntu",
+            "values": {},  # no "mode" key at all
+        }
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+    assert len(violations) == 0
+
+
+def test_evaluator_managed_resource_still_checked_with_mode():
+    """A managed resource carrying mode='managed' is still evaluated."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="required-tags",
+        name="Required Application tag",
+        resource_type="aws_instance",
+        severity="error",
+        property="tags",
+        has_keys=["Application"],
+        message="{{resource_name}} must have Application tags",
+    )
+
+    resources = [
+        {
+            "address": "aws_instance.web",
+            "type": "aws_instance",
+            "name": "web",
+            "mode": "managed",
+            "values": {"tags": None, "tags_all": {"Environment": "prod"}},  # no Application
+        }
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+    assert len(violations) == 1
+
+
+def test_evaluator_asg_tag_blocks_pass():
+    """ASG tags via repeatable `tag` blocks (list of {key,value}) satisfy has_keys."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="required-tags",
+        name="Required Application tag",
+        resource_type="aws_autoscaling_group",
+        severity="error",
+        property="tags",
+        has_keys=["Application", "map-migrated"],
+        message="{{resource_name}} must have Application and map-migrated tags",
+    )
+
+    resources = [
+        {
+            "address": "module.neo4j.aws_autoscaling_group.neo4j",
+            "type": "aws_autoscaling_group",
+            "name": "neo4j",
+            "mode": "managed",
+            "values": {
+                # ASGs have no tags_all; tags live in the `tag` block collection.
+                # Dynamic "tag" blocks produce this same flattened list at plan time.
+                "tags": None,
+                "tag": [
+                    {"key": "Application", "value": "neo4j", "propagate_at_launch": True},
+                    {"key": "map-migrated", "value": "mig-123", "propagate_at_launch": True},
+                ],
+            },
+        }
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+    assert len(violations) == 0
+
+
+def test_evaluator_asg_tag_blocks_missing_key_violates():
+    """ASG tag blocks genuinely missing a required key still fail."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="required-tags",
+        name="Required Application tag",
+        resource_type="aws_autoscaling_group",
+        severity="error",
+        property="tags",
+        has_keys=["Application", "map-migrated"],
+        message="{{resource_name}} must have Application and map-migrated tags",
+    )
+
+    resources = [
+        {
+            "address": "module.neo4j.aws_autoscaling_group.neo4j",
+            "type": "aws_autoscaling_group",
+            "name": "neo4j",
+            "mode": "managed",
+            "values": {
+                "tag": [
+                    {"key": "Application", "value": "neo4j", "propagate_at_launch": True},
+                ],  # missing map-migrated
+            },
+        }
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+    assert len(violations) == 1
+
+
+def test_evaluator_asg_nested_tag_key_value():
+    """A nested tag path (tags.Application) resolves through ASG tag blocks."""
+    evaluator = SimpleEvaluator()
+
+    rule = Rule(
+        id="app-tag-value",
+        name="Application tag must equal neo4j",
+        resource_type="aws_autoscaling_group",
+        severity="error",
+        property="tags.Application",
+        equals="neo4j",
+        message="Application tag must be neo4j",
+    )
+
+    resources = [
+        {
+            "address": "module.neo4j.aws_autoscaling_group.neo4j",
+            "type": "aws_autoscaling_group",
+            "name": "neo4j",
+            "mode": "managed",
+            "values": {
+                "tag": [
+                    {"key": "Application", "value": "neo4j", "propagate_at_launch": True},
+                ],
+            },
+        }
+    ]
+
+    violations = evaluator.evaluate(rule, resources)
+    assert len(violations) == 0
+
+
 def test_evaluator_backwards_compatibility_single_resource_type():
     """Test that existing rules with single resource_type still work."""
     evaluator = SimpleEvaluator()

@@ -1,0 +1,64 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.0",
+  "resource_changes": [
+    {
+      "address": "module.api.data.aws_ami.ubuntu",
+      "module_address": "module.api",
+      "mode": "data",
+      "type": "aws_ami",
+      "name": "ubuntu",
+      "change": {
+        "actions": ["read"],
+        "before": null,
+        "after": {
+          "id": "ami-0abcdef1234567890",
+          "owners": ["099720109477"],
+          "most_recent": true
+        }
+      }
+    },
+    {
+      "address": "module.neo4j.aws_autoscaling_group.neo4j",
+      "module_address": "module.neo4j",
+      "mode": "managed",
+      "type": "aws_autoscaling_group",
+      "name": "neo4j",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "neo4j-asg",
+          "min_size": 1,
+          "max_size": 3,
+          "tags": null,
+          "tag": [
+            {"key": "Application", "value": "neo4j", "propagate_at_launch": true},
+            {"key": "Environment", "value": "production", "propagate_at_launch": true},
+            {"key": "map-migrated", "value": "mig-00012345", "propagate_at_launch": true}
+          ]
+        }
+      }
+    },
+    {
+      "address": "module.api.aws_instance.api",
+      "module_address": "module.api",
+      "mode": "managed",
+      "type": "aws_instance",
+      "name": "api",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "instance_type": "t3.medium",
+          "tags": null,
+          "tags_all": {
+            "Application": "api",
+            "Environment": "production",
+            "map-migrated": "mig-00012345"
+          }
+        }
+      }
+    }
+  ]
+}

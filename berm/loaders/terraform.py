@@ -44,6 +44,7 @@ def load_terraform_plan(
                 "address": "aws_s3_bucket.example",
                 "type": "aws_s3_bucket",
                 "name": "example",
+                "mode": "managed" | "data",
                 "values": {...},  # Resource configuration
                 "actions": ["create"] | ["update"] | ["delete", "create"] | ["create", "delete"] | ["delete"]
             },
@@ -121,6 +122,11 @@ def load_terraform_plan(
             resource_type = change.get("type", "")
             name = change.get("name", "")
 
+            # Resource mode: "managed" for real resources, "data" for data
+            # sources. Data sources (e.g. a public AMI lookup) are read-only and
+            # not taggable, so evaluators use this to exclude them from policies.
+            mode = change.get("mode", "managed")
+
             # Get the 'after' values (planned configuration)
             # For creates/updates, 'after' contains the new values
             # For deletions, fall back to 'before'
@@ -136,6 +142,7 @@ def load_terraform_plan(
                 "address": address,
                 "type": resource_type,
                 "name": name,
+                "mode": mode,
                 "values": values,
                 "actions": actions,
             }

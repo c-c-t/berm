@@ -82,6 +82,13 @@ class SimpleEvaluator:
         resource_type = resource.get("type", "unknown")
         values = resource.get("values", {})
 
+        # Skip data sources: they are read-only lookups (e.g. resolving a public
+        # AMI), are not taggable, and have no settable arguments to enforce. Only
+        # managed resources are subject to policy rules. (Data source addresses
+        # also start with "data."; mode is the authoritative signal.)
+        if resource.get("mode") == "data" or resource_address.startswith("data."):
+            return None
+
         # Check if rule should only apply to creation actions
         if rule.only_on_create:
             actions = resource.get("actions", [])
@@ -185,21 +192,25 @@ class SimpleEvaluator:
     def _resolve_property_value(
         self, values: Dict[str, Any], property_path: str
     ) -> Any:
-        """Resolve a property value, honoring AWS provider default_tags.
+        """Resolve a property value, honoring how Terraform represents tags.
 
-        When the AWS provider uses a ``default_tags`` block, Terraform exposes
-        two attributes on each resource:
+        AWS exposes "the tags on a resource" in several different shapes, and a
+        required-tag policy should see the same effective tag set regardless of
+        which one a given resource uses:
 
-        - ``tags``: tags set directly on the resource (often null/empty when all
-          tags are supplied by the provider).
-        - ``tags_all``: the effective, merged set (provider default_tags +
-          resource-level tags).
+        - ``tags_all``: the fully-resolved map (resource ``tags`` merged with
+          provider ``default_tags``). This is the canonical effective set and is
+          present on most taggable resources.
+        - ``tags``: tags set directly on the resource. Often null/empty when all
+          tags come from provider ``default_tags``.
+        - ``tag``: a *list* of ``{key, value, propagate_at_launch}`` blocks used
+          by ``aws_autoscaling_group`` (including blocks emitted by a dynamic
+          ``tag`` block). ASGs have no ``tags_all``; this is their tag set.
 
-        Policies almost always care about the *effective* tags, so for any rule
-        targeting ``tags`` (or a nested key like ``tags.Application``) we prefer
-        the corresponding ``tags_all`` path and fall back to ``tags`` only when
-        ``tags_all`` is absent (e.g. non-AWS resources or plans without
-        default_tags). All other properties resolve normally.
+        For any rule targeting ``tags`` (or a nested key like
+        ``tags.Application``) we resolve against the effective tag map built from
+        these sources (see :meth:`_effective_tags`). All other properties resolve
+        normally.
 
         Args:
             values: Resource ``values`` dictionary from the normalized plan
@@ -209,12 +220,84 @@ class SimpleEvaluator:
             The resolved value (None if not found)
         """
         if property_path == "tags" or property_path.startswith("tags."):
-            tags_all_path = "tags_all" + property_path[len("tags"):]
-            effective = get_nested_property(values, tags_all_path)
+            effective = self._effective_tags(values)
             if effective is not None:
-                return effective
+                # Re-root the lookup at the synthesized effective tag map so
+                # nested paths like "tags.Application" continue to work.
+                return get_nested_property({"tags": effective}, property_path)
 
         return get_nested_property(values, property_path)
+
+    def _effective_tags(self, values: Dict[str, Any]) -> Dict[str, Any] | None:
+        """Build the effective tag map for a resource from any tag source.
+
+        Checks the known tag attributes in priority order and returns the first
+        one that carries tags. ``tags_all`` wins because it already reflects
+        provider ``default_tags``; ``tag`` (the ASG block-list form) is the
+        fallback for autoscaling groups, which have no ``tags_all``.
+
+        Args:
+            values: Resource ``values`` dictionary from the normalized plan
+
+        Returns:
+            A ``{key: value}`` dict of effective tags. Returns an empty dict when
+            a tag attribute is present but carries no tags (a genuine "untagged"
+            resource, which should still fail required-tag rules), or None when
+            no tag attribute exists at all.
+        """
+        sources = ("tags_all", "tag", "tags")
+
+        # Prefer the first source that actually carries tags.
+        for source in sources:
+            normalized = self._normalize_tags(values.get(source))
+            if normalized:
+                return normalized
+
+        # No source had tags; preserve the {} vs missing distinction so callers
+        # can tell "present but empty" from "no tag attribute at all".
+        for source in sources:
+            normalized = self._normalize_tags(values.get(source))
+            if normalized is not None:
+                return normalized
+
+        return None
+
+    def _normalize_tags(self, raw: Any) -> Dict[str, Any] | None:
+        """Normalize a raw tag value into a ``{key: value}`` dict.
+
+        Handles the two map-shaped representations Terraform emits:
+
+        - A map (``{"Application": "api"}``) — returned as-is.
+        - A list of ``{key, value}`` blocks (the ``aws_autoscaling_group`` ``tag``
+          / legacy ``tags`` form, including dynamically generated blocks) —
+          flattened into a map. Entries without a ``key`` are skipped.
+
+        Any other list (e.g. a plain ``["Environment", "Owner"]`` list used with
+        a ``contains`` check) is *not* tag-block-shaped and is left for the caller
+        to handle directly, so this returns None for it.
+
+        Args:
+            raw: The raw value of a tag attribute
+
+        Returns:
+            A ``{key: value}`` dict for map / block-list forms, or None if ``raw``
+            is not a recognized tag map (including non-block lists and scalars).
+        """
+        if isinstance(raw, dict):
+            return raw
+
+        if isinstance(raw, list):
+            # Only treat the list as tags if it looks like ASG tag blocks, i.e.
+            # at least one {key, value} entry. Otherwise leave it untouched.
+            if not any(isinstance(item, dict) and "key" in item for item in raw):
+                return None
+            normalized: Dict[str, Any] = {}
+            for item in raw:
+                if isinstance(item, dict) and "key" in item:
+                    normalized[item["key"]] = item.get("value")
+            return normalized
+
+        return None
 
     def _check_equals(self, actual: Any, expected: Any) -> bool:
         """Compare two values for equality.
