@@ -42,13 +42,20 @@ class CrossResourceEvaluator:
         rule: Rule,
         resources: List[Dict[str, Any]],
         plan_data: Optional[Dict[str, Any]] = None,
+        all_resources: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Violation]:
         """Evaluate a cross-resource rule against resources.
 
         Args:
             rule: The policy rule to evaluate (must have requires_resources)
-            resources: List of normalized resource dictionaries from Terraform plan
+            resources: List of normalized resource dictionaries (no-op excluded).
+                Used to determine which primary resources to evaluate.
             plan_data: Full Terraform plan data (optional, for reference extraction)
+            all_resources: Extended resource list that includes no-op (unchanged)
+                resources. When provided, the lookup index is built from this list
+                so that existing unchanged companion resources (e.g. an already-
+                deployed aws_s3_bucket_versioning) can satisfy requirements even
+                when only the primary bucket is being modified.
 
         Returns:
             List of violations found (empty if all resources comply)
@@ -59,8 +66,11 @@ class CrossResourceEvaluator:
 
         violations = []
 
-        # Build resource index for fast lookups
-        resource_index = self._build_resource_index(resources)
+        # Build resource index for fast lookups.
+        # Use all_resources (includes no-op) when available so that existing
+        # companion resources satisfy requirements even if they have no changes.
+        index_source = all_resources if all_resources is not None else resources
+        resource_index = self._build_resource_index(index_source)
 
         # Extract references and constant values from plan configuration
         reference_map: Dict[str, List[str]] = {}
@@ -70,8 +80,16 @@ class CrossResourceEvaluator:
             reference_map = extract_resource_references(plan_data)
             constant_map = extract_constant_values(plan_data)
 
-        # Get primary resources matching the rule's resource_type
+        # Get primary resources matching the rule's resource_type.
+        # When all_resources was used to build the index (includes no-op entries),
+        # restrict primaries to addresses present in the non-noop resources list so
+        # we don't flag resources that aren't being changed.
         primary_resources = self._get_primary_resources(rule, resource_index)
+        if all_resources is not None:
+            non_noop_addresses = {r.get("address") for r in resources}
+            primary_resources = [
+                p for p in primary_resources if p.get("address") in non_noop_addresses
+            ]
 
         # Check each primary resource
         for primary in primary_resources:

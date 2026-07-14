@@ -219,7 +219,7 @@ def test_load_terraform_plan_includes_replacements_always(tmp_path):
 
 
 def test_load_terraform_plan_excludes_noop(tmp_path):
-    """Test that no-op resources are excluded."""
+    """Test that no-op resources are excluded by default."""
     plan_data = {
         "resource_changes": [
             {
@@ -252,6 +252,50 @@ def test_load_terraform_plan_excludes_noop(tmp_path):
     # Should only include the changed resource
     assert len(resources) == 1
     assert resources[0]["address"] == "aws_s3_bucket.changed"
+
+
+def test_load_terraform_plan_includes_noop_when_requested(tmp_path):
+    """Test that no-op resources are included when include_noop=True."""
+    plan_data = {
+        "resource_changes": [
+            {
+                "address": "aws_s3_bucket.changed",
+                "type": "aws_s3_bucket",
+                "name": "changed",
+                "change": {
+                    "actions": ["update"],
+                    "after": {"bucket": "my-bucket"},
+                },
+            },
+            {
+                "address": "aws_s3_bucket_versioning.unchanged",
+                "type": "aws_s3_bucket_versioning",
+                "name": "unchanged",
+                "change": {
+                    "actions": ["no-op"],
+                    "after": {
+                        "bucket": "my-bucket",
+                        "versioning_configuration": [{"status": "Enabled"}],
+                    },
+                },
+            },
+        ]
+    }
+
+    plan_file = tmp_path / "plan.json"
+    with open(plan_file, "w") as f:
+        json.dump(plan_data, f)
+
+    resources = load_terraform_plan(
+        str(plan_file), _allow_absolute=True, include_noop=True
+    )
+
+    assert len(resources) == 2
+    addresses = {r["address"] for r in resources}
+    assert "aws_s3_bucket.changed" in addresses
+    assert "aws_s3_bucket_versioning.unchanged" in addresses
+    noop_resource = next(r for r in resources if r["address"] == "aws_s3_bucket_versioning.unchanged")
+    assert noop_resource["actions"] == ["no-op"]
 
 
 def test_load_terraform_plan_includes_replaced(tmp_path):

@@ -564,6 +564,14 @@ def run_check(
             # If we can't load plan data, cross-resource validation will degrade gracefully
             pass
 
+        # Load all resources including no-op for cross-resource relationship checks.
+        # An existing companion resource (e.g. aws_s3_bucket_versioning) that has no
+        # changes in this plan is still a valid related resource and must be visible to
+        # the cross-resource evaluator.
+        all_resources = load_terraform_plan(
+            plan_file, include_deletions=include_deletions, include_noop=True
+        )
+
         # Evaluate rules
         if verbose:
             click.echo("Evaluating policy rules...")
@@ -578,7 +586,7 @@ def run_check(
             violations.extend(simple_evaluator.evaluate(rule, resources))
 
             # Cross-resource relationship evaluation
-            violations.extend(cross_evaluator.evaluate(rule, resources, plan_data))
+            violations.extend(cross_evaluator.evaluate(rule, resources, plan_data, all_resources))
 
         # Report violations
         reporter = get_reporter(format)

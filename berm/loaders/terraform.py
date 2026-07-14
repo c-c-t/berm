@@ -23,6 +23,7 @@ def load_terraform_plan(
     plan_path: str,
     _allow_absolute: bool = False,
     include_deletions: bool = False,
+    include_noop: bool = False,
 ) -> List[Dict[str, Any]]:
     """Load and parse a Terraform plan JSON file.
 
@@ -36,6 +37,9 @@ def load_terraform_plan(
         plan_path: Path to Terraform plan JSON file (output of 'terraform show -json')
         _allow_absolute: Internal parameter for testing - allows absolute paths
         include_deletions: When True, also include pure deletion actions
+        include_noop: When True, also include unchanged (no-op) resources. Useful for
+            cross-resource relationship checks where an existing unchanged resource
+            should still satisfy a requirement.
 
     Returns:
         List of resource dictionaries with normalized structure:
@@ -106,9 +110,10 @@ def load_terraform_plan(
             # Get action type
             actions = change.get("change", {}).get("actions", [])
 
-            # Always skip no-op
+            # Skip no-op unless caller explicitly wants them (e.g. for cross-resource lookups)
             if not actions or actions == ["no-op"]:
-                continue
+                if not include_noop:
+                    continue
 
             # Replacements (delete+create or create+delete) are always included
             is_replacement = set(actions) == {"delete", "create"}

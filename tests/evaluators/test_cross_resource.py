@@ -179,6 +179,195 @@ def test_evaluate_with_name_based_matching(evaluator, s3_bucket_resources):
     assert violations[0].resource_name == "aws_s3_bucket.non_compliant"
 
 
+def test_evaluate_noop_companion_satisfies_requirement(evaluator):
+    """No-op companion resources in all_resources should satisfy requires_resources.
+
+    Scenario: an S3 bucket is being updated (tags change) but its versioning and
+    public-access-block resources already exist and are unchanged (no-op).  The
+    policy should PASS because the companion resources do exist — they just don't
+    appear in the non-noop resource list.
+    """
+    rule = Rule(
+        id="s3-bucket-requires-security",
+        name="S3 buckets must have versioning and public access block configured",
+        resource_type="aws_s3_bucket",
+        severity="error",
+        requires_resources=[
+            RequiredResource(
+                resource_type="aws_s3_bucket_versioning",
+                relationship="referenced_by_primary",
+                reference_property="bucket",
+                min_count=1,
+                conditions={"versioning_configuration.0.status": "Enabled"},
+            ),
+            RequiredResource(
+                resource_type="aws_s3_bucket_public_access_block",
+                relationship="referenced_by_primary",
+                reference_property="bucket",
+                min_count=1,
+                conditions={"block_public_acls": True, "block_public_policy": True},
+            ),
+        ],
+        message="S3 bucket {{resource_name}} must have required security configurations",
+    )
+
+    # Only the bucket is changing; companion resources are no-op (excluded from resources)
+    resources = [
+        {
+            "address": "aws_s3_bucket.app_server_files",
+            "type": "aws_s3_bucket",
+            "name": "app_server_files",
+            "actions": ["update"],
+            "values": {"bucket": "cct-lab-app-server-files"},
+        },
+    ]
+
+    # all_resources includes the no-op companion resources
+    all_resources = resources + [
+        {
+            "address": "aws_s3_bucket_versioning.app_server_files",
+            "type": "aws_s3_bucket_versioning",
+            "name": "app_server_files",
+            "actions": ["no-op"],
+            "values": {
+                "bucket": "cct-lab-app-server-files",
+                "versioning_configuration": [{"status": "Enabled"}],
+            },
+        },
+        {
+            "address": "aws_s3_bucket_public_access_block.app_server_files",
+            "type": "aws_s3_bucket_public_access_block",
+            "name": "app_server_files",
+            "actions": ["no-op"],
+            "values": {
+                "bucket": "cct-lab-app-server-files",
+                "block_public_acls": True,
+                "block_public_policy": True,
+            },
+        },
+    ]
+
+    plan_data = {
+        "configuration": {
+            "root_module": {
+                "resources": [
+                    {
+                        "address": "aws_s3_bucket.app_server_files",
+                        "expressions": {
+                            "bucket": {"constant_value": "cct-lab-app-server-files"}
+                        },
+                    },
+                    {
+                        "address": "aws_s3_bucket_versioning.app_server_files",
+                        "expressions": {
+                            "bucket": {
+                                "references": [
+                                    "aws_s3_bucket.app_server_files.id",
+                                    "aws_s3_bucket.app_server_files",
+                                ]
+                            }
+                        },
+                    },
+                    {
+                        "address": "aws_s3_bucket_public_access_block.app_server_files",
+                        "expressions": {
+                            "bucket": {
+                                "references": [
+                                    "aws_s3_bucket.app_server_files.id",
+                                    "aws_s3_bucket.app_server_files",
+                                ]
+                            }
+                        },
+                    },
+                ]
+            }
+        }
+    }
+
+    violations = evaluator.evaluate(rule, resources, plan_data, all_resources)
+
+    assert violations == [], f"Expected no violations but got: {violations}"
+
+
+def test_evaluate_noop_companion_not_evaluated_as_primary(evaluator):
+    """No-op resources in all_resources must not themselves be evaluated as primaries."""
+    rule = Rule(
+        id="s3-bucket-requires-security",
+        name="S3 buckets must have versioning",
+        resource_type="aws_s3_bucket",
+        severity="error",
+        requires_resources=[
+            RequiredResource(
+                resource_type="aws_s3_bucket_versioning",
+                relationship="referenced_by_primary",
+                reference_property="bucket",
+                min_count=1,
+            ),
+        ],
+        message="S3 bucket {{resource_name}} must have versioning configured",
+    )
+
+    # One bucket is changing; another is no-op (should not be checked as a primary)
+    resources = [
+        {
+            "address": "aws_s3_bucket.changing",
+            "type": "aws_s3_bucket",
+            "name": "changing",
+            "actions": ["update"],
+            "values": {"bucket": "changing-bucket"},
+        },
+    ]
+
+    all_resources = resources + [
+        {
+            "address": "aws_s3_bucket.noop",
+            "type": "aws_s3_bucket",
+            "name": "noop",
+            "actions": ["no-op"],
+            "values": {"bucket": "noop-bucket"},
+        },
+        {
+            "address": "aws_s3_bucket_versioning.changing",
+            "type": "aws_s3_bucket_versioning",
+            "name": "changing",
+            "actions": ["no-op"],
+            "values": {
+                "bucket": "changing-bucket",
+                "versioning_configuration": [{"status": "Enabled"}],
+            },
+        },
+    ]
+
+    plan_data = {
+        "configuration": {
+            "root_module": {
+                "resources": [
+                    {
+                        "address": "aws_s3_bucket.changing",
+                        "expressions": {"bucket": {"constant_value": "changing-bucket"}},
+                    },
+                    {
+                        "address": "aws_s3_bucket_versioning.changing",
+                        "expressions": {
+                            "bucket": {
+                                "references": [
+                                    "aws_s3_bucket.changing.id",
+                                    "aws_s3_bucket.changing",
+                                ]
+                            }
+                        },
+                    },
+                ]
+            }
+        }
+    }
+
+    violations = evaluator.evaluate(rule, resources, plan_data, all_resources)
+
+    # Only aws_s3_bucket.changing is a primary; aws_s3_bucket.noop is not evaluated
+    assert violations == [], f"Expected no violations but got: {violations}"
+
+
 def test_evaluate_with_conditions(evaluator):
     """Test evaluation with property conditions on related resources."""
     resources = [
